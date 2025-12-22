@@ -129,7 +129,8 @@ void particle_update(Particle* p) {
 void particle_flock_optimized(Particle* p, int particle_idx, Particle* particles,
                               int* neighbors, int neighbor_count,
                               const Vector3D* leader1, const Vector3D* leader2,
-                              float perception_radius, float separation_weight) {
+                              float perception_radius, float separation_weight,
+                              bool leader1_blocked, bool leader2_blocked) {
     Vector3D separation = vec3_create(0, 0, 0);
     Vector3D alignment = vec3_create(0, 0, 0);
     Vector3D cohesion = vec3_create(0, 0, 0);
@@ -181,16 +182,28 @@ void particle_flock_optimized(Particle* p, int particle_idx, Particle* particles
         vec3_limit(&cohesion, p->max_force);
     }
 
+    // Only attract to leaders that aren't blocked by obstacles
     float dist1_sq = vec3_dist_sq_inline(&p->position, leader1);
     float dist2_sq = vec3_dist_sq_inline(&p->position, leader2);
-    const Vector3D* closest_leader = (dist1_sq < dist2_sq) ? leader1 : leader2;
-    Vector3D leader_attraction = particle_seek(p, closest_leader);
-    vec3_mult(&leader_attraction, 0.5f);
+
+    const Vector3D* closest_leader = NULL;
+    if (!leader1_blocked && !leader2_blocked) {
+        closest_leader = (dist1_sq < dist2_sq) ? leader1 : leader2;
+    } else if (!leader1_blocked) {
+        closest_leader = leader1;
+    } else if (!leader2_blocked) {
+        closest_leader = leader2;
+    }
+
+    if (closest_leader != NULL) {
+        Vector3D leader_attraction = particle_seek(p, closest_leader);
+        vec3_mult(&leader_attraction, 0.5f);
+        vec3_add(&p->acceleration, &leader_attraction);
+    }
 
     vec3_add(&p->acceleration, &separation);
     vec3_add(&p->acceleration, &alignment);
     vec3_add(&p->acceleration, &cohesion);
-    vec3_add(&p->acceleration, &leader_attraction);
 }
 
 void particle_wrap(Particle* p, float width, float height, float depth) {

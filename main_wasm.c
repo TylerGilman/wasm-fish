@@ -20,6 +20,7 @@
 #define HEIGHT 600
 #define DEPTH 600.0f
 #define NUM_PARTICLES 500
+#define MAX_OBSTACLES 30
 
 int current_width = WIDTH;
 int current_height = HEIGHT;
@@ -38,7 +39,15 @@ typedef struct {
   Vector3D mouse_pos;
 } AppState;
 
+typedef struct {
+  float x, y, width, height;
+  float padding;
+  bool active;
+} Obstacle;
+
 AppState app_state;
+Obstacle obstacles[MAX_OBSTACLES];
+int obstacle_count = 0;
 Particle *particles;
 SpatialGrid *spatial_grid;
 Vector3D leader1, leader2;
@@ -181,6 +190,122 @@ void init_simulation() {
   printf("Press SPACE to toggle cursor following\n");
 }
 
+// Check if line from p1 to p2 intersects a rectangle
+bool line_intersects_rect(float x1, float y1, float x2, float y2,
+                          float rx, float ry, float rw, float rh) {
+  // Check if either point is inside the rectangle
+  if (x1 >= rx && x1 <= rx + rw && y1 >= ry && y1 <= ry + rh) return true;
+  if (x2 >= rx && x2 <= rx + rw && y2 >= ry && y2 <= ry + rh) return true;
+
+  // Check line against all four edges
+  float dx = x2 - x1;
+  float dy = y2 - y1;
+
+  float t[4];
+  int valid = 0;
+
+  // Left edge
+  if (dx != 0) {
+    float tt = (rx - x1) / dx;
+    if (tt >= 0 && tt <= 1) {
+      float yy = y1 + tt * dy;
+      if (yy >= ry && yy <= ry + rh) return true;
+    }
+  }
+  // Right edge
+  if (dx != 0) {
+    float tt = (rx + rw - x1) / dx;
+    if (tt >= 0 && tt <= 1) {
+      float yy = y1 + tt * dy;
+      if (yy >= ry && yy <= ry + rh) return true;
+    }
+  }
+  // Top edge
+  if (dy != 0) {
+    float tt = (ry - y1) / dy;
+    if (tt >= 0 && tt <= 1) {
+      float xx = x1 + tt * dx;
+      if (xx >= rx && xx <= rx + rw) return true;
+    }
+  }
+  // Bottom edge
+  if (dy != 0) {
+    float tt = (ry + rh - y1) / dy;
+    if (tt >= 0 && tt <= 1) {
+      float xx = x1 + tt * dx;
+      if (xx >= rx && xx <= rx + rw) return true;
+    }
+  }
+
+  return false;
+}
+
+// Check if any obstacle blocks line of sight between two points
+bool obstacle_blocks_path(float x1, float y1, float x2, float y2) {
+  for (int i = 0; i < obstacle_count; i++) {
+    if (!obstacles[i].active) continue;
+    Obstacle* obs = &obstacles[i];
+    if (line_intersects_rect(x1, y1, x2, y2, obs->x, obs->y, obs->width, obs->height)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+Vector3D calculate_obstacle_avoidance(Particle* p) {
+  Vector3D steering = vec3_create(0, 0, 0);
+
+  for (int i = 0; i < obstacle_count; i++) {
+    if (!obstacles[i].active) continue;
+
+    Obstacle* obs = &obstacles[i];
+    float pad = obs->padding;
+
+    // Center of obstacle
+    float cx = obs->x + obs->width / 2.0f;
+    float cy = obs->y + obs->height / 2.0f;
+
+    // Half dimensions with padding for soft boundary
+    float hw = obs->width / 2.0f + pad;
+    float hh = obs->height / 2.0f + pad;
+
+    // Distance from particle to center
+    float dx = p->position.x - cx;
+    float dy = p->position.y - cy;
+
+    // Normalized distance (0 = at center, 1 = at edge of padded area)
+    float nx = fabsf(dx) / hw;
+    float ny = fabsf(dy) / hh;
+
+    // Only affect particles within the soft boundary zone
+    if (nx < 1.2f && ny < 1.2f) {
+      // Calculate how deep into the zone (higher = deeper)
+      float penetration = fmaxf(0.0f, 1.0f - fmaxf(nx, ny));
+
+      // Soft exponential falloff - gentle push that increases near center
+      float strength = penetration * penetration * 2.0f;
+
+      // Push direction: away from center, biased toward nearest edge
+      Vector3D push = vec3_create(0, 0, 0);
+
+      if (nx > ny) {
+        // Closer to left/right edge - push horizontally
+        push.x = (dx > 0) ? 1.0f : -1.0f;
+        push.y = (dy > 0) ? 0.3f : -0.3f;
+      } else {
+        // Closer to top/bottom edge - push vertically
+        push.x = (dx > 0) ? 0.3f : -0.3f;
+        push.y = (dy > 0) ? 1.0f : -1.0f;
+      }
+
+      vec3_mult(&push, strength);
+      vec3_add(&steering, &push);
+    }
+  }
+
+  return steering;
+}
+
 void update_simulation() {
   separation_time += SEPARATION_OSCILLATION_SPEED;
   float separation_weight = 1.1f + sinf(separation_time) * 0.3f;
@@ -216,9 +341,23 @@ void update_simulation() {
                                  &particles[i].position, PERCEPTION_RADIUS,
                                  &neighbors, &neighbor_count);
 
+    // Check if leaders are blocked by obstacles
+    bool leader1_blocked = obstacle_blocks_path(
+        particles[i].position.x, particles[i].position.y,
+        leader1.x, leader1.y);
+    bool leader2_blocked = obstacle_blocks_path(
+        particles[i].position.x, particles[i].position.y,
+        leader2.x, leader2.y);
+
     particle_flock_optimized(&particles[i], i, particles, neighbors,
                              neighbor_count, &leader1, &leader2,
-                             PERCEPTION_RADIUS, separation_weight);
+                             PERCEPTION_RADIUS, separation_weight,
+                             leader1_blocked, leader2_blocked);
+
+    // Apply obstacle avoidance
+    Vector3D avoidance = calculate_obstacle_avoidance(&particles[i]);
+    vec3_add(&particles[i].acceleration, &avoidance);
+
     particle_update(&particles[i]);
     particle_wrap(&particles[i], current_width, current_height, DEPTH);
   }
@@ -285,6 +424,33 @@ void resize_canvas(int width, int height) {
   current_width = width;
   current_height = height;
   glViewport(0, 0, width, height);
+}
+
+// Exported functions for obstacle avoidance
+EMSCRIPTEN_KEEPALIVE
+void set_obstacle(int index, float x, float y, float width, float height, float padding) {
+  if (index >= 0 && index < MAX_OBSTACLES) {
+    obstacles[index].x = x;
+    obstacles[index].y = y;
+    obstacles[index].width = width;
+    obstacles[index].height = height;
+    obstacles[index].padding = padding;
+    obstacles[index].active = true;
+    if (index >= obstacle_count) obstacle_count = index + 1;
+  }
+}
+
+EMSCRIPTEN_KEEPALIVE
+void clear_obstacles() {
+  for (int i = 0; i < MAX_OBSTACLES; i++) {
+    obstacles[i].active = false;
+  }
+  obstacle_count = 0;
+}
+
+EMSCRIPTEN_KEEPALIVE
+int get_obstacle_count() {
+  return obstacle_count;
 }
 
 int main() {

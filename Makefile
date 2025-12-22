@@ -6,7 +6,7 @@ EMCC = emcc
 EMFLAGS = -O3 -s USE_WEBGL2=1 -s FULL_ES3=1 -s WASM=1 \
           -s ALLOW_MEMORY_GROWTH=1 -s NO_EXIT_RUNTIME=1 \
           -s EXPORTED_RUNTIME_METHODS='["ccall","cwrap"]' \
-          -s EXPORTED_FUNCTIONS='["_main","_resize_canvas"]'
+          -s EXPORTED_FUNCTIONS='["_main","_resize_canvas","_set_obstacle","_clear_obstacles","_get_obstacle_count"]'
 
 TARGET = flock
 WASM_JS = flock_wasm.js

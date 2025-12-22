@@ -1,6 +1,7 @@
 #ifndef PARTICLE_H
 #define PARTICLE_H
 
+#include <stdbool.h>
 #include "vector3d.h"
 
 typedef struct {
@@ -22,7 +23,8 @@ void particle_flock(Particle* p, Particle* particles, int count,
 void particle_flock_optimized(Particle* p, int particle_idx, Particle* particles,
                               int* neighbors, int neighbor_count,
                               const Vector3D* leader1, const Vector3D* leader2,
-                              float perception_radius, float separation_weight);
+                              float perception_radius, float separation_weight,
+                              bool leader1_blocked, bool leader2_blocked);
 void particle_update(Particle* p);
 void particle_wrap(Particle* p, float width, float height, float depth);
 
