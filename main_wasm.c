@@ -35,17 +35,11 @@ int current_height = HEIGHT;
 #define STAGGER_CACHE_UPDATES 1
 
 typedef struct {
-  bool follow_cursor;
-  Vector3D mouse_pos;
-} AppState;
-
-typedef struct {
   float x, y, width, height;
   float padding;
   bool active;
 } Obstacle;
 
-AppState app_state;
 Obstacle obstacles[MAX_OBSTACLES];
 int obstacle_count = 0;
 Particle *particles;
@@ -59,57 +53,43 @@ int frame_counter = 0;
 GLuint program;
 GLuint vbo;
 GLint position_attrib;
-GLint color_attrib;
+GLint alpha_attrib;
 GLint size_attrib;
 GLint resolution_uniform;
+GLint ink_uniform;
+
+/* Ink color of the dots (cobalt, matching the site palette). The canvas is
+   transparent, so the page background is never touched. */
+#define INK_R 0.114f
+#define INK_G 0.239f
+#define INK_B 0.561f
 
 const char *vertex_shader_src = "attribute vec2 position;\n"
-                                "attribute vec3 color;\n"
+                                "attribute float alpha;\n"
                                 "attribute float size;\n"
                                 "uniform vec2 resolution;\n"
-                                "varying vec3 vColor;\n"
+                                "varying float vAlpha;\n"
                                 "void main() {\n"
                                 "    gl_Position = vec4(position.x / (resolution.x * 0.5) - "
                                 "1.0, 1.0 - position.y / (resolution.y * 0.5), 0.0, 1.0);\n"
                                 "    gl_PointSize = size;\n"
-                                "    vColor = color;\n"
+                                "    vAlpha = alpha;\n"
                                 "}\n";
 
+/* Round, soft-edged points instead of hard squares. */
 const char *fragment_shader_src = "precision mediump float;\n"
-                                  "varying vec3 vColor;\n"
+                                  "uniform vec3 ink;\n"
+                                  "varying float vAlpha;\n"
                                   "void main() {\n"
-                                  "    gl_FragColor = vec4(vColor, 1.0);\n"
+                                  "    float d = length(gl_PointCoord - vec2(0.5));\n"
+                                  "    float edge = smoothstep(0.5, 0.3, d);\n"
+                                  "    gl_FragColor = vec4(ink, vAlpha * edge);\n"
                                   "}\n";
 
 int compare_particles_by_z(const void *a, const void *b) {
   const Particle *pa = (const Particle *)a;
   const Particle *pb = (const Particle *)b;
   return (pb->position.z > pa->position.z) - (pb->position.z < pa->position.z);
-}
-
-EM_BOOL mouse_callback(int eventType, const EmscriptenMouseEvent *e,
-                       void *userData) {
-  (void)eventType;
-  (void)userData;
-
-  EmscriptenMouseEvent mouse = *e;
-  app_state.mouse_pos.x = (float)mouse.targetX;
-  app_state.mouse_pos.y = (float)mouse.targetY;
-  return EM_TRUE;
-}
-
-EM_BOOL key_callback(int eventType, const EmscriptenKeyboardEvent *e,
-                     void *userData) {
-  (void)userData;
-
-  if (eventType == EMSCRIPTEN_EVENT_KEYDOWN) {
-    if (strcmp(e->code, "Space") == 0) {
-      app_state.follow_cursor = !app_state.follow_cursor;
-      printf("Follow cursor: %s\n", app_state.follow_cursor ? "ON" : "OFF");
-      return EM_TRUE;
-    }
-  }
-  return EM_FALSE;
 }
 
 GLuint compile_shader(GLenum type, const char *source) {
@@ -150,13 +130,14 @@ void init_gl() {
   glDeleteShader(fragment_shader);
 
   position_attrib = glGetAttribLocation(program, "position");
-  color_attrib = glGetAttribLocation(program, "color");
+  alpha_attrib = glGetAttribLocation(program, "alpha");
   size_attrib = glGetAttribLocation(program, "size");
   resolution_uniform = glGetUniformLocation(program, "resolution");
+  ink_uniform = glGetUniformLocation(program, "ink");
 
   glGenBuffers(1, &vbo);
 
-  glClearColor(0.99f, 0.98f, 0.94f, 1.0f);  // Oyster white
+  glClearColor(0.0f, 0.0f, 0.0f, 0.0f);  // Fully transparent
   glEnable(GL_BLEND);
   glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 }
@@ -179,15 +160,7 @@ void init_simulation() {
   target_leader1 = leader1;
   target_leader2 = leader2;
 
-  app_state.follow_cursor = false;
-  app_state.mouse_pos = vec3_create(current_width / 2.0f, current_height / 2.0f, DEPTH / 2.0f);
-
-  emscripten_set_mousemove_callback("#canvas", NULL, 1, mouse_callback);
-  emscripten_set_keydown_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW, NULL, 1,
-                                  key_callback);
-
   printf("Flocking Simulation (WebAssembly)\n");
-  printf("Press SPACE to toggle cursor following\n");
 }
 
 // Check if line from p1 to p2 intersects a rectangle
@@ -310,20 +283,15 @@ void update_simulation() {
   separation_time += SEPARATION_OSCILLATION_SPEED;
   float separation_weight = 1.1f + sinf(separation_time) * 0.3f;
 
-  if (app_state.follow_cursor) {
-    target_leader1 = vec3_copy(&app_state.mouse_pos);
-    target_leader2 = vec3_copy(&app_state.mouse_pos);
-  } else {
-    leader_angle += LEADER_SPEED;
-    target_leader1 =
-        vec3_create(current_width / 2.0f + cosf(leader_angle) * ORBIT_RADIUS,
-                    current_height / 2.0f + sinf(leader_angle) * ORBIT_RADIUS * 0.7f,
-                    DEPTH / 2.0f + sinf(leader_angle * 1.5f) * 100.0f);
-    target_leader2 = vec3_create(
-        current_width / 2.0f + cosf(leader_angle + M_PI) * ORBIT_RADIUS,
-        current_height / 2.0f + sinf(leader_angle + M_PI) * ORBIT_RADIUS * 0.7f,
-        DEPTH / 2.0f + cosf(leader_angle * 1.5f) * 100.0f);
-  }
+  leader_angle += LEADER_SPEED;
+  target_leader1 =
+      vec3_create(current_width / 2.0f + cosf(leader_angle) * ORBIT_RADIUS,
+                  current_height / 2.0f + sinf(leader_angle) * ORBIT_RADIUS * 0.7f,
+                  DEPTH / 2.0f + sinf(leader_angle * 1.5f) * 100.0f);
+  target_leader2 = vec3_create(
+      current_width / 2.0f + cosf(leader_angle + M_PI) * ORBIT_RADIUS,
+      current_height / 2.0f + sinf(leader_angle + M_PI) * ORBIT_RADIUS * 0.7f,
+      DEPTH / 2.0f + cosf(leader_angle * 1.5f) * 100.0f);
 
   leader1.x += (target_leader1.x - leader1.x) * LEADER_INTERPOLATION;
   leader1.y += (target_leader1.y - leader1.y) * LEADER_INTERPOLATION;
@@ -375,23 +343,22 @@ void render() {
 
   // Update viewport resolution uniform
   glUniform2f(resolution_uniform, (float)current_width, (float)current_height);
+  glUniform3f(ink_uniform, INK_R, INK_G, INK_B);
 
-  float vertex_data[NUM_PARTICLES * 6];
+  float vertex_data[NUM_PARTICLES * 4];
 
   for (int i = 0; i < NUM_PARTICLES; i++) {
     Particle *p = &particles[i];
     float depth_factor = p->position.z / DEPTH;
-    float size = 1.5f + ((DEPTH - p->position.z) / DEPTH) * 3.0f;
+    float size = 2.0f + ((DEPTH - p->position.z) / DEPTH) * 3.5f;
 
-    // Black to grey gradient based on depth (closer = darker, farther = lighter grey)
-    float gray = depth_factor * 0.5f;  // 0.0 (black) to 0.5 (grey)
+    // Depth fade: closer = solid ink, farther = faint ink
+    float alpha = 1.0f - depth_factor * 0.75f;
 
-    vertex_data[i * 6 + 0] = p->position.x;
-    vertex_data[i * 6 + 1] = p->position.y;
-    vertex_data[i * 6 + 2] = gray;
-    vertex_data[i * 6 + 3] = gray;
-    vertex_data[i * 6 + 4] = gray;
-    vertex_data[i * 6 + 5] = size;
+    vertex_data[i * 4 + 0] = p->position.x;
+    vertex_data[i * 4 + 1] = p->position.y;
+    vertex_data[i * 4 + 2] = alpha;
+    vertex_data[i * 4 + 3] = size;
   }
 
   glBindBuffer(GL_ARRAY_BUFFER, vbo);
@@ -399,15 +366,15 @@ void render() {
                GL_DYNAMIC_DRAW);
 
   glVertexAttribPointer(position_attrib, 2, GL_FLOAT, GL_FALSE,
-                        6 * sizeof(float), (void *)0);
+                        4 * sizeof(float), (void *)0);
   glEnableVertexAttribArray(position_attrib);
 
-  glVertexAttribPointer(color_attrib, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float),
+  glVertexAttribPointer(alpha_attrib, 1, GL_FLOAT, GL_FALSE, 4 * sizeof(float),
                         (void *)(2 * sizeof(float)));
-  glEnableVertexAttribArray(color_attrib);
+  glEnableVertexAttribArray(alpha_attrib);
 
-  glVertexAttribPointer(size_attrib, 1, GL_FLOAT, GL_FALSE, 6 * sizeof(float),
-                        (void *)(5 * sizeof(float)));
+  glVertexAttribPointer(size_attrib, 1, GL_FLOAT, GL_FALSE, 4 * sizeof(float),
+                        (void *)(3 * sizeof(float)));
   glEnableVertexAttribArray(size_attrib);
 
   glDrawArrays(GL_POINTS, 0, NUM_PARTICLES);
@@ -456,9 +423,10 @@ int get_obstacle_count() {
 int main() {
   EmscriptenWebGLContextAttributes attrs;
   emscripten_webgl_init_context_attributes(&attrs);
-  attrs.alpha = false;
+  attrs.alpha = true;
   attrs.depth = false;
   attrs.antialias = true;
+  attrs.premultipliedAlpha = false;
 
   EMSCRIPTEN_WEBGL_CONTEXT_HANDLE ctx =
       emscripten_webgl_create_context("#canvas", &attrs);
