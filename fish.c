@@ -8,12 +8,60 @@ static float angle_delta(float angle, float anchor) {
   return atan2f(sinf(angle - anchor), cosf(angle - anchor));
 }
 
+/* Exact critically damped response for a target held over this step. */
+static void spring(float *value, float *rate, float target, float frequency,
+                   float dt) {
+  float error = *value - target;
+  float offset = (*rate + frequency * error) * dt;
+  float decay = expf(-frequency * dt);
+  *value = target + (error + offset) * decay;
+  *rate = (*rate - frequency * offset) * decay;
+}
+
+static void resolve_fins(FishBody *body, float dt) {
+  float glide = clamp(body->speed / (body->length * 1.4f), 0, 1);
+  for (int pair = 0; pair < 2; ++pair) {
+    int joint = pair == 0 ? 3 : 7;
+    float turn = pair == 0 ? body->turn : body->pelvic_turn * .55f;
+    for (int index = 0; index < 2; ++index) {
+      int side = index == 0 ? -1 : 1;
+      FishFinPose *pose = &body->fins[pair][index];
+      float previous_heading = pose->heading;
+      float lag = pair == 0 ? .08f : .12f;
+      pose->heading += angle_delta(body->angles[joint], pose->heading) *
+                       (1 - expf(-dt / lag));
+      pose->heading = atan2f(sinf(pose->heading), cosf(pose->heading));
+      float angular_speed = angle_delta(pose->heading, previous_heading) / dt;
+      float inside = side * turn;
+      float target_spread = (pair == 0 ? .54f : .40f) + .8f * inside +
+                            .12f * fabsf(turn) - .08f * glide;
+      target_spread = clamp(target_spread, .28f, 1.30f);
+      spring(&pose->spread, &pose->spread_rate, target_spread,
+             pair == 0 ? 12 : 9, dt);
+
+      /* The flexible tip trails changes at the root, then curls into a turn.
+         Its slower response absorbs rapid steering changes and body waves. */
+      float target_flex = .95f * inside + .12f * side * angular_speed -
+                          .20f * pose->spread_rate;
+      target_flex += .035f * sinf(body->phase * .7f + side * .6f);
+      target_flex = clamp(target_flex, fmaxf(-.95f, -.12f - pose->spread),
+                          fminf(.95f, 1.95f - pose->spread));
+      spring(&pose->flex, &pose->flex_rate, target_flex, pair == 0 ? 7 : 5.5f,
+             dt);
+    }
+  }
+}
+
 void fish_body_init(FishBody *body, float x, float y, float heading,
                     float length, float girth, float phase) {
   body->length = fmaxf(12, length);
   body->girth = clamp(girth, 0.5f, 1.6f);
   body->phase = phase;
   body->speed = body->turn = body->pelvic_turn = 0;
+  for (int pair = 0; pair < 2; ++pair)
+    for (int side = 0; side < 2; ++side)
+      body->fins[pair][side] =
+          (FishFinPose){.heading = heading, .spread = pair == 0 ? .54f : .40f};
   float spacing = body->length / (FISH_JOINTS - 1);
   for (int i = 0; i < FISH_JOINTS; ++i) {
     body->joints[i] = (FishPoint){x - cosf(heading) * spacing * i,
@@ -58,6 +106,7 @@ void fish_body_resolve(FishBody *body, float x, float y, float velocity_x,
     body->joints[i] = (FishPoint){anchor.x - cosf(angle) * spacing,
                                   anchor.y - sinf(angle) * spacing};
   }
+  resolve_fins(body, dt);
 }
 
 float fish_body_radius(const FishBody *body, int joint) {
@@ -77,46 +126,38 @@ static FishPoint times(FishPoint p, float scale) {
   return (FishPoint){p.x * scale, p.y * scale};
 }
 
-static FishPoint quadratic(FishPoint a, FishPoint control, FishPoint b,
-                           float t) {
-  float u = 1 - t;
-  return plus(plus(times(a, u * u), times(control, 2 * u * t)),
-              times(b, t * t));
-}
-
 int fish_fin_shape(const FishBody *body, int joint, int side, FishFin *fin) {
   if (!body || !fin || joint < 0 || joint >= FISH_BODY_JOINTS ||
       (side != -1 && side != 1))
     return 0;
-  int pectoral = joint < 5;
-  float turn = pectoral ? body->turn : body->pelvic_turn * .55f;
-  float inside = side * turn;
-  float glide = clamp(body->speed / (body->length * 1.4f), 0, 1);
-  float spread = (pectoral ? .48f : .36f) + .65f * inside + .15f * fabsf(turn);
-  spread -= .10f * glide * (1 - fabsf(turn));
-  spread += .025f * sinf(body->phase + side * 1.2f) * (1 - .65f * fabsf(turn));
-  spread = clamp(spread, .12f, 1.35f);
-
+  int pair = joint < 5 ? 0 : 1;
+  const FishFinPose *pose = &body->fins[pair][side == -1 ? 0 : 1];
   FishPoint forward = {cosf(body->angles[joint]), sinf(body->angles[joint])};
   FishPoint outward = times((FishPoint){-forward.y, forward.x}, (float)side);
-  FishPoint axis =
-      plus(times(forward, -cosf(spread)), times(outward, sinf(spread)));
-  float length = body->length * (pectoral ? .22f : .12f);
-  float chord = length * (pectoral ? .24f : .26f);
+  float heading = pose->heading + angle_delta(body->angles[joint],
+                                              body->angles[pair == 0 ? 3 : 7]);
+  float length = body->length * (pair == 0 ? .24f : .14f);
+  float chord = length * .24f;
+  float flex = clamp(pose->flex, -.95f, .95f);
   fin->attachment = plus(body->joints[joint],
-                         times(outward, fish_body_radius(body, joint) * .8f));
-  fin->tip = plus(fin->attachment, times(axis, length));
-  FishPoint front = plus(fin->attachment, times(forward, chord * .5f));
-  FishPoint back = plus(fin->attachment, times(forward, -chord * .5f));
-  FishPoint control_a = plus(plus(fin->attachment, times(axis, length * .55f)),
-                             times(forward, chord * .65f));
-  FishPoint control_b = plus(plus(fin->attachment, times(axis, length * .58f)),
-                             times(forward, -chord * .35f));
-  fin->outline[0] = front;
-  for (int i = 1; i <= 8; ++i) {
-    float t = i / 8.0f;
-    fin->outline[i] = quadratic(front, control_a, fin->tip, t);
-    fin->outline[8 + i] = quadratic(fin->tip, control_b, back, t);
+                         times(outward, fish_body_radius(body, joint) * .9f));
+  FishPoint center = fin->attachment;
+  for (int i = 0; i < FISH_FIN_STATIONS; ++i) {
+    float t = i / (float)(FISH_FIN_STATIONS - 1);
+    if (i) {
+      float middle = (i - .5f) / (FISH_FIN_STATIONS - 1);
+      float angle = heading + 3.141592654f -
+                    side * (pose->spread + flex * middle * middle);
+      FishPoint tangent = {cosf(angle), sinf(angle)};
+      center = plus(center, times(tangent, length / (FISH_FIN_STATIONS - 1)));
+    }
+    float angle = heading + 3.141592654f - side * (pose->spread + flex * t * t);
+    FishPoint normal = {sinf(angle) * side, -cosf(angle) * side};
+    float width =
+        chord * .5f * powf(1 - t, .7f) * (.78f + .4f * sinf(t * 3.141592654f));
+    fin->outline[i] = plus(center, times(normal, width));
+    fin->outline[FISH_FIN_POINTS - 1 - i] = plus(center, times(normal, -width));
   }
+  fin->tip = center;
   return 1;
 }

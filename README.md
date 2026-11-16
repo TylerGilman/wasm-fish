@@ -56,13 +56,18 @@ Depth changes size, color, and draw order.
 The bodies are opaque, so a near fish covers a fish behind it.
 This is not a perspective camera or a solid 3D fish mesh.
 
-The fins are thin, swept blades.
+The fins are thin, curved blades with a spine of fixed-length segments.
 Their angles use head turn rate, swim speed, and body length.
+The base and tip have separate damped motion.
+The tip follows changes at the base after a short delay.
 The front pectoral fin on the inside of a turn opens out.
 The outside fin folds back toward the body.
 A smaller turn radius causes a larger difference between the two fins.
 The rear pelvic fins make smaller movements after a short delay.
 Both pairs return smoothly toward their straight swimming pose.
+Tighter turns bend the blade along its length.
+The renderer fills each blade with a triangle strip along its spine.
+This keeps the fill inside the curved edges when a fin folds back.
 All fin motion and geometry run in C/WASM.
 
 This is a simple motion model, with inspiration from studies of
@@ -90,7 +95,7 @@ node scripts/check-demo.mjs http://127.0.0.1:8090/ 390 844 reduce
 Native checks exercise joint distances, bend limits, frame-rate independence,
 pause, depth order, count limits, resize, reset, and obstacle steering.
 Fin checks exercise left and right turns, turn radius, blade width,
-delayed movement, and the return to straight swimming.
+tip curvature, rapid turn reversals, mesh winding, and the return to straight swimming.
 Browser checks need Node.js 22+ and Google Chrome.
 They exercise the compiled WASM through the demo controls.
 Captures are written to `build/`.

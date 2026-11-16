@@ -48,6 +48,52 @@ static float fin_spread(const FishBody *body, int joint, int side) {
   return atan2f(side * (-s * dx + c * dy), -(c * dx + s * dy));
 }
 
+static FishPoint fin_center(const FishFin *fin, int station) {
+  FishPoint a = fin->outline[station];
+  FishPoint b = fin->outline[FISH_FIN_POINTS - 1 - station];
+  return (FishPoint){(a.x + b.x) * .5f, (a.y + b.y) * .5f};
+}
+
+static float signed_area(FishPoint a, FishPoint b, FishPoint c) {
+  return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+}
+
+static float fin_curve(const FishBody *body, int joint, int side) {
+  FishFin fin;
+  assert(fish_fin_shape(body, joint, side, &fin));
+  FishPoint a = fin_center(&fin, 0), b = fin_center(&fin, 1);
+  FishPoint c = fin_center(&fin, FISH_FIN_STATIONS - 2), d = fin.tip;
+  float angle = atan2f(d.y - c.y, d.x - c.x) - atan2f(b.y - a.y, b.x - a.x);
+  return atan2f(sinf(angle), cosf(angle));
+}
+
+static void fin_geometry(const FishBody *body, int joint, int side) {
+  FishFin fin;
+  assert(fish_fin_shape(body, joint, side, &fin));
+  float length = 0, widest = 0, winding = 0;
+  for (int i = 0; i < FISH_FIN_POINTS; ++i)
+    assert(isfinite(fin.outline[i].x) && isfinite(fin.outline[i].y));
+  for (int i = 0; i < FISH_FIN_STATIONS; ++i) {
+    FishPoint a = fin.outline[i], b = fin.outline[FISH_FIN_POINTS - 1 - i];
+    widest = fmaxf(widest, hypotf(a.x - b.x, a.y - b.y));
+    if (i == FISH_FIN_STATIONS - 1)
+      continue;
+    FishPoint center = fin_center(&fin, i), next = fin_center(&fin, i + 1);
+    length += hypotf(next.x - center.x, next.y - center.y);
+    float area = signed_area(a, b, fin.outline[i + 1]);
+    if (i == 0)
+      winding = area;
+    assert(area * winding > 0); /* The blade must not fold through itself. */
+    if (i < FISH_FIN_STATIONS - 2)
+      assert(signed_area(fin.outline[i + 1], b,
+                         fin.outline[FISH_FIN_POINTS - 2 - i]) *
+                 winding >
+             0);
+  }
+  assert(length > body->length * .1f && length < body->length * .3f);
+  assert(widest / length < .25f);
+}
+
 static void fin_motion(void) {
   FishBody straight = swim_arc(0), right = swim_arc(.9f), left = swim_arc(-.9f);
   FishBody wide = swim_arc(.15f);
@@ -58,21 +104,18 @@ static void fin_motion(void) {
   float tight_difference = fin_spread(&right, 3, 1) - fin_spread(&right, 3, -1);
   float wide_difference = fin_spread(&wide, 3, 1) - fin_spread(&wide, 3, -1);
   assert(tight_difference > wide_difference + .2f);
+  assert(fabsf(fin_curve(&right, 3, 1)) >
+         fabsf(fin_curve(&straight, 3, 1)) + .35f);
+  assert(fabsf(fin_curve(&right, 3, 1)) > fabsf(fin_curve(&wide, 3, 1)) + .2f);
+  assert(fabsf(fin_curve(&left, 3, -1)) >
+         fabsf(fin_curve(&straight, 3, -1)) + .35f);
+  assert(fabsf(fin_curve(&right, 3, -1)) >
+         fabsf(fin_curve(&straight, 3, -1)) + .15f);
 
   for (int side = -1; side <= 1; side += 2) {
-    FishFin fin;
-    assert(fish_fin_shape(&right, 3, side, &fin));
-    float dx = fin.tip.x - fin.attachment.x, dy = fin.tip.y - fin.attachment.y;
-    float span = hypotf(dx, dy), lo = 1e9f, hi = -1e9f;
-    for (int i = 0; i < FISH_FIN_POINTS; ++i) {
-      float cross = ((fin.outline[i].x - fin.attachment.x) * -dy +
-                     (fin.outline[i].y - fin.attachment.y) * dx) /
-                    span;
-      lo = fminf(lo, cross);
-      hi = fmaxf(hi, cross);
-    }
-    assert((hi - lo) / span <
-           .35f); /* A slender blade, even in a tight turn. */
+    fin_geometry(&straight, 3, side);
+    fin_geometry(&right, 3, side);
+    fin_geometry(&left, 3, side);
   }
 
   FishBody transient;
@@ -88,6 +131,33 @@ static void fin_motion(void) {
   assert(fabsf(transient.turn) < .001f && fabsf(transient.pelvic_turn) < .001f);
   fish_body_resolve(&transient, 1.5f, .05f, 0, 0, SCHOOL_STEP);
   assert(isfinite(fin_spread(&transient, 3, 1)));
+
+  /* Turn reversals and the +/- pi heading boundary must not snap the tips. */
+  FishBody reversing;
+  fish_body_init(&reversing, 200, 200, 3.12f, 70, 1, 0);
+  float x = 200, y = 200, direction = 3.12f;
+  float previous[2][2] = {{0}};
+  for (int step = 0; step < 1200; ++step) {
+    float rate = step % 240 < 120 ? 2.4f : -2.4f;
+    direction += rate * SCHOOL_STEP;
+    float vx = cosf(direction) * 90, vy = sinf(direction) * 90;
+    x += vx * SCHOOL_STEP;
+    y += vy * SCHOOL_STEP;
+    fish_body_resolve(&reversing, x, y, vx, vy, SCHOOL_STEP);
+    for (int pair = 0; pair < 2; ++pair)
+      for (int index = 0; index < 2; ++index) {
+        int joint = pair == 0 ? 3 : 7, side = index == 0 ? -1 : 1;
+        fin_geometry(&reversing, joint, side);
+        FishFin fin;
+        assert(fish_fin_shape(&reversing, joint, side, &fin));
+        float angle =
+            atan2f(fin.tip.y - fin.attachment.y, fin.tip.x - fin.attachment.x);
+        float change = angle - previous[pair][index];
+        if (step)
+          assert(fabsf(atan2f(sinf(change), cosf(change))) < .15f);
+        previous[pair][index] = angle;
+      }
+  }
 }
 
 int main(void) {
@@ -104,6 +174,15 @@ int main(void) {
            .001f);
     assert(fabsf(a->particles[i].position.z - b->particles[i].position.z) <
            .001f);
+    for (int side = -1; side <= 1; side += 2) {
+      FishFin left, right;
+      assert(fish_fin_shape(&a->bodies[i], 3, side, &left));
+      assert(fish_fin_shape(&b->bodies[i], 3, side, &right));
+      for (int point = 0; point < FISH_FIN_POINTS; ++point) {
+        assert(fabsf(left.outline[point].x - right.outline[point].x) < .001f);
+        assert(fabsf(left.outline[point].y - right.outline[point].y) < .001f);
+      }
+    }
   }
   constraints(a);
   constraints(b);
@@ -157,7 +236,7 @@ int main(void) {
   school_destroy(a);
   school_destroy(b);
   puts("passed: frame-rate independence, pause, depth order, constraints, "
-       "count limits, resize, obstacle steering, reset, turn-driven slender "
-       "fins");
+       "count limits, resize, obstacle steering, reset, flexible fins, "
+       "turn reversals, fin mesh winding");
   return 0;
 }

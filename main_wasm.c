@@ -76,14 +76,6 @@ static FishPoint catmull(FishPoint a, FishPoint b, FishPoint c, FishPoint d,
                             (2 * a.y - 5 * b.y + 4 * c.y - d.y) * t2 +
                             (-a.y + 3 * b.y - 3 * c.y + d.y) * t3)};
 }
-static void polygon(FishPoint *p, int count, Color fill, Color stroke,
-                    float width) {
-  for (int i = 1; i < count - 1; ++i)
-    triangle(p[0], p[i], p[i + 1], fill);
-  for (int i = 0; i < count; ++i)
-    line(p[i], p[(i + 1) % count], width, stroke);
-}
-
 static void draw_fin(const FishBody *b, int joint, int side, float scale,
                      Color fill, Color stroke) {
   FishFin fin;
@@ -91,7 +83,17 @@ static void draw_fin(const FishBody *b, int joint, int side, float scale,
     return;
   for (int i = 0; i < FISH_FIN_POINTS; ++i)
     fin.outline[i] = transform(fin.outline[i], b->joints[0], scale);
-  polygon(fin.outline, FISH_FIN_POINTS, fill, stroke, .65f * scale);
+  /* A strip follows the curved blade. A root fan can cross a folded edge. */
+  for (int i = 0; i < FISH_FIN_STATIONS - 1; ++i) {
+    int back = FISH_FIN_POINTS - 1 - i;
+    triangle(fin.outline[i], fin.outline[back], fin.outline[i + 1], fill);
+    if (i < FISH_FIN_STATIONS - 2)
+      triangle(fin.outline[i + 1], fin.outline[back], fin.outline[back - 1],
+               fill);
+  }
+  for (int i = 0; i < FISH_FIN_POINTS; ++i)
+    line(fin.outline[i], fin.outline[(i + 1) % FISH_FIN_POINTS], .65f * scale,
+         stroke);
 }
 
 /* Depth changes pigment color, not body opacity. Near bodies hide farther fish.
