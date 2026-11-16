@@ -88,8 +88,8 @@ Vector3D vec3_sub_new(const Vector3D* v1, const Vector3D* v2) {
 }
 
 Vector3D vec3_random3d(void) {
-    float theta = ((float)rand() / RAND_MAX) * M_PI * 2.0f;
-    float phi = ((float)rand() / RAND_MAX) * M_PI;
+    float theta = (float)(((double)rand() / (double)RAND_MAX) * M_PI * 2.0);
+    float phi = (float)(((double)rand() / (double)RAND_MAX) * M_PI);
     return vec3_create(
         sinf(phi) * cosf(theta),
         sinf(phi) * sinf(theta),

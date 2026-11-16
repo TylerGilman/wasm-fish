@@ -1,27 +1,6 @@
-# Compiled binaries
-flock
-*.o
-*.out
-
-# WebAssembly build artifacts
-flock_wasm.js
-flock_wasm.wasm
-*.data
-
-# Emscripten SDK (huge - should be installed separately)
-emsdk/
-
-# Build directories
 build/
-dist/
-
-# Editor files
-*.swp
-*.swo
-*~
-.vscode/
-.idea/
-
-# OS files
+web/fish.js
+web/fish.wasm
+*.o
 .DS_Store
-Thumbs.db
+emsdk/

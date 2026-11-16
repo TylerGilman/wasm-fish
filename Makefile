@@ -1,38 +1,29 @@
-CC = gcc
-CFLAGS = -Wall -Wextra -O3 -std=c11
-LIBS = -lglfw -lGL -lGLU -lm
+CC ?= cc
+EMCC ?= emcc
+CFLAGS = -std=c11 -O2 -Wall -Wextra -Werror
+CORE = fish.c school.c particle.c spatial_grid.c vector3d.c
+HEADERS = fish.h school.h particle.h spatial_grid.h vector3d.h
+EXPORTS = '["_main","_resize_canvas","_set_count","_set_speed","_set_scale","_set_debug","_set_depth","_set_paused","_set_follow","_set_pointer","_reset_school","_set_obstacle","_clear_obstacles","_get_fish_count","_get_simulation_time","_get_frame_ms","_get_dropped_triangles"]'
 
-EMCC = emcc
-EMFLAGS = -O3 -s USE_WEBGL2=1 -s FULL_ES3=1 -s WASM=1 \
-          -s ALLOW_MEMORY_GROWTH=1 -s NO_EXIT_RUNTIME=1 \
-          -s EXPORTED_RUNTIME_METHODS='["ccall","cwrap"]' \
-          -s EXPORTED_FUNCTIONS='["_main","_resize_canvas","_set_obstacle","_clear_obstacles","_get_obstacle_count"]'
-
-TARGET = flock
-WASM_JS = flock_wasm.js
-SOURCES = main.c vector3d.c particle.c spatial_grid.c
-WASM_SOURCES = main_wasm.c vector3d.c particle.c spatial_grid.c
-OBJECTS = $(SOURCES:.c=.o)
-
-all: $(TARGET)
-
-$(TARGET): $(OBJECTS)
-	$(CC) $(OBJECTS) -o $(TARGET) $(LIBS)
-
-%.o: %.c
-	$(CC) $(CFLAGS) -c $< -o $@
-
-wasm: $(WASM_SOURCES)
-	$(EMCC) $(WASM_SOURCES) $(EMFLAGS) -o $(WASM_JS)
-	@echo "Build complete! Open index.html in a browser (serve with: make serve)"
-
-clean:
-	rm -f $(OBJECTS) $(TARGET) flock_wasm.js flock_wasm.wasm
-
-run: $(TARGET)
-	./$(TARGET)
-
+.PHONY: all wasm test sanitize serve clean
+all: wasm
+wasm: web/fish.js
+web/fish.js: main_wasm.c $(CORE) $(HEADERS) Makefile
+	$(EMCC) $(CFLAGS) -O3 main_wasm.c $(CORE) -lm \
+		-s MIN_WEBGL_VERSION=2 -s MAX_WEBGL_VERSION=2 \
+		-s MODULARIZE=1 -s EXPORT_NAME=createFishSchool -s ENVIRONMENT=web \
+		-s FILESYSTEM=0 -s NO_EXIT_RUNTIME=1 -s INITIAL_MEMORY=16777216 \
+		-s STACK_SIZE=262144 -s EXPORTED_FUNCTIONS=$(EXPORTS) -o $@
+build/test-school: tests/test_school.c $(CORE) $(HEADERS)
+	mkdir -p build
+	$(CC) $(CFLAGS) -I. tests/test_school.c $(CORE) -lm -o $@
+test: build/test-school
+	./build/test-school
+sanitize:
+	mkdir -p build
+	$(CC) $(CFLAGS) -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer -I. tests/test_school.c $(CORE) -lm -o build/test-school-sanitize
+	./build/test-school-sanitize
 serve:
-	python3 -m http.server 8080
-
-.PHONY: all clean run wasm serve
+	python3 -m http.server 8090 --bind 127.0.0.1 --directory web
+clean:
+	rm -f web/fish.js web/fish.wasm build/test-school build/test-school-sanitize

@@ -4,7 +4,7 @@
 #include "particle.h"
 
 #define MAX_PARTICLES_PER_CELL 64
-#define MAX_NEIGHBORS 10
+#define MAX_NEIGHBORS 32
 
 typedef struct {
   int *particle_indices;

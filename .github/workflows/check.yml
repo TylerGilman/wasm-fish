@@ -1,0 +1,28 @@
+name: Checks
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  native:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - run: make test sanitize
+  wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Emscripten 7.0.0
+        run: |
+          git clone --depth=1 https://github.com/emscripten-core/emsdk.git /tmp/emsdk
+          /tmp/emsdk/emsdk install 7.0.0
+          /tmp/emsdk/emsdk activate 7.0.0
+      - run: make wasm EMCC=/tmp/emsdk/upstream/emscripten/emcc
+      - uses: actions/upload-artifact@v7
+        with:
+          name: wasm-fish-web
+          path: |
+            web/
+            LICENSE
+            THIRD_PARTY_NOTICES.md
+          if-no-files-found: error

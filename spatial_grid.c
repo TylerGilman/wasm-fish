@@ -38,6 +38,7 @@ SpatialGrid* spatial_grid_create(float world_width, float world_height, float wo
 }
 
 void spatial_grid_destroy(SpatialGrid* grid) {
+    if (!grid) return;
     free(grid->particle_indices);
     free(grid->cell_starts);
     free(grid->cell_counts);
