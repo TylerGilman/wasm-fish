@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert/strict';
 
-const [url='http://127.0.0.1:8090/',widthArg='1440',heightArg='900',motion='no-preference']=process.argv.slice(2);
+const [url='http://127.0.0.1:8090/',widthArg='1440',heightArg='900',motion='no-preference',frameMode='page']=process.argv.slice(2);
 assert(['localhost','127.0.0.1','[::1]'].includes(new URL(url).hostname),'Use a local preview URL');
 const width=Number(widthArg),height=Number(heightArg);
 const profile=await mkdtemp(join(tmpdir(),'wasm-fish-check-'));
@@ -27,24 +27,26 @@ try {
   target=await(await fetch(`${endpoint}/json/new?about:blank`,{method:'PUT'})).json();
   socket=new WebSocket(target.webSocketDebuggerUrl);
   await new Promise(resolve=>socket.addEventListener('open',resolve,{once:true}));
-  let id=0;const pending=new Map(),errors=[];
+  let id=0,evaluationContext,frameSession;const pending=new Map(),errors=[],contexts=new Map();
   socket.addEventListener('message',event=>{
     const message=JSON.parse(event.data);
+    if(message.method==='Runtime.executionContextCreated')contexts.set((message.sessionId||'')+':'+message.params.context.id,{...message.params.context,sessionId:message.sessionId});
+    if(message.method==='Runtime.executionContextDestroyed')contexts.delete((message.sessionId||'')+':'+message.params.executionContextId);
     if(message.method==='Runtime.exceptionThrown') errors.push(message.params.exceptionDetails);
     if(message.method==='Log.entryAdded'&&message.params.entry.level==='error')errors.push(message.params.entry);
     const request=pending.get(message.id);if(!request)return;
     pending.delete(message.id);clearTimeout(request.timer);
     message.error?request.reject(new Error(JSON.stringify(message.error))):request.resolve(message.result);
   });
-  function send(method,params={}){
+  function send(method,params={},sessionId){
     return new Promise((resolve,reject)=>{
       const requestId=++id;
       const timer=setTimeout(()=>{pending.delete(requestId);reject(new Error('CDP timeout: '+method));},30000);
-      pending.set(requestId,{resolve,reject,timer});socket.send(JSON.stringify({id:requestId,method,params}));
+      pending.set(requestId,{resolve,reject,timer});socket.send(JSON.stringify({id:requestId,method,params,...(sessionId?{sessionId}:{})}));
     });
   }
   async function evaluate(expression){
-    const r=await send('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true});
+    const r=await send('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true,...(evaluationContext?{contextId:evaluationContext}:{})},frameSession);
     if(r.exceptionDetails)throw new Error(JSON.stringify(r.exceptionDetails));return r.result.value;
   }
   const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
@@ -56,11 +58,31 @@ try {
   await send('Page.enable');await send('Runtime.enable');await send('Log.enable');
   await send('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:width<=720});
   await send('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:motion}]});
-  await send('Page.navigate',{url});
+  const navigation=await send('Page.navigate',{url});
+  if(navigation.errorText)throw new Error('Cannot open preview: '+navigation.errorText);
+  if(frameMode==='iframe'){
+    await sleep(1000);
+    for(let n=0;n<150&&!evaluationContext;n++){
+      const tree=(await send('Page.getFrameTree')).frameTree;
+      const childFrame=tree.childFrames?.[0]?.frame;
+      const child=childFrame&&childFrame.url!=='about:blank'?childFrame.id:null;
+      if(!frameSession){
+        const targets=(await send('Target.getTargets')).targetInfos;
+        const iframe=targets.find(t=>t.type==='iframe');
+        if(iframe){
+          frameSession=(await send('Target.attachToTarget',{targetId:iframe.targetId,flatten:true})).sessionId;
+          await send('Runtime.enable',{},frameSession);await send('Log.enable',{},frameSession);
+        }
+      }
+      const context=[...contexts.values()].find(c=>c.auxData?.isDefault&&(frameSession?c.sessionId===frameSession:c.auxData.frameId===child));
+      if(context)evaluationContext=context.id;else await sleep(100);
+    }
+    if(!evaluationContext){console.log(JSON.stringify({frameTree:await send('Page.getFrameTree'),contexts:[...contexts.values()]}));throw new Error('Cannot find the sandbox frame context');}
+  }
   await evaluate(`new Promise((resolve,reject)=>{let n=0;const t=setInterval(()=>{if(window.fishDemo){clearInterval(t);resolve();}else if(n++>200){clearInterval(t);reject(new Error(document.getElementById('status').textContent));}},50);})`);
   await sleep(2500);
-  const initial=await evaluate(`({count:fishDemo.module._get_fish_count(),time:fishDemo.module._get_simulation_time(),cpuMs:fishDemo.module._get_frame_ms(),overflow:document.documentElement.scrollWidth>innerWidth,status:document.getElementById('status').textContent})`);
-  assert.equal(initial.count,width<=720?16:40);assert.equal(initial.overflow,false);
+  const initial=await evaluate(`({width:document.getElementById('canvas').getBoundingClientRect().width,count:fishDemo.module._get_fish_count(),time:fishDemo.module._get_simulation_time(),cpuMs:fishDemo.module._get_frame_ms(),overflow:document.documentElement.scrollWidth>innerWidth,status:document.getElementById('status').textContent})`);
+  assert.equal(initial.count,initial.width<=720?16:40);assert.equal(initial.overflow,false);
   if(motion==='reduce')assert.equal(initial.time,0);else assert(initial.time>1);
   await capture(motion==='reduce'?'reduced':'normal');
   await evaluate(`document.getElementById('settings-panel').open=true`);

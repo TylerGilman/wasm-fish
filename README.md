@@ -82,6 +82,18 @@ It does not measure the complete GPU frame time.
 
 ## Integration boundary
 
+### Spaces package
+
+[Open the Spaces demo](https://chatgpt.com/space/page_9bf34313dac88191a1a73e5891059dca).
+
+`make spaces` writes `build/wasm-fish-spaces.html`.
+This file includes the compiled WASM bytes and needs no external asset requests.
+It fits the Page embed limit of 256 KiB.
+The C/WASM engine is the same engine used in the standalone demo.
+The Page version also saves control choices in widget state.
+
+### Standalone module
+
 The original flock repo and the Nereus site are separate from this project.
 This demo does not deploy or change either one.
 
