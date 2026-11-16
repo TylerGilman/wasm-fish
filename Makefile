@@ -3,7 +3,7 @@ EMCC ?= emcc
 CFLAGS = -std=c11 -O2 -Wall -Wextra -Werror
 CORE = fish.c school.c particle.c spatial_grid.c vector3d.c
 HEADERS = fish.h school.h particle.h spatial_grid.h vector3d.h
-EXPORTS = '["_main","_resize_canvas","_set_count","_set_speed","_set_scale","_set_debug","_set_depth","_set_paused","_set_follow","_set_pointer","_reset_school","_set_obstacle","_clear_obstacles","_get_fish_count","_get_simulation_time","_get_frame_ms","_get_dropped_triangles"]'
+EXPORTS = '["_main","_resize_canvas","_set_count","_set_speed","_set_scale","_set_debug","_set_depth","_set_palette","_set_paused","_set_follow","_set_pointer","_reset_school","_set_obstacle","_clear_obstacles","_get_fish_count","_get_simulation_time","_get_frame_ms","_get_dropped_triangles"]'
 
 .PHONY: all wasm spaces test sanitize serve clean
 all: wasm

@@ -117,10 +117,18 @@ This demo does not deploy or change either one.
 The module factory is `createFishSchool({canvas})`.
 Use a canvas with `id="canvas"` and a defined CSS size.
 The module exposes `_resize_canvas`, `_set_count`, `_set_speed`, `_set_scale`,
-`_set_debug`, `_set_depth`, `_set_paused`, `_set_follow`, `_set_pointer`,
+`_set_debug`, `_set_depth`, `_set_palette`, `_set_paused`, `_set_follow`, `_set_pointer`,
 `_reset_school`, `_set_obstacle`, and `_clear_obstacles`.
 Coordinates use CSS pixels.
 The device pixel ratio is capped at 2 for the drawing buffer.
+
+`_set_palette(inkRGB, paperRGB, strength)` sets the colors for an embedded school.
+Pass colors as packed RGB integers, such as `0x1d3d8f`.
+The body color strength ranges from 0 to 1. The demo default is 0.58.
+Use 1 for full ink color on the nearest fish.
+Depth still makes distant fish lighter. Body opacity stays at 1.
+Pointer following starts disabled. An embedding page can leave it disabled
+and omit pointer position updates.
 
 Obstacle rectangles use the original flock integration pattern.
 They add soft steering with clearance for the fish body.

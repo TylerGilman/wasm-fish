@@ -21,6 +21,9 @@ static GLuint program, buffer;
 static GLint resolution;
 static double last_time;
 static float frame_ms;
+static Color ink_color = {29 / 255.f, 61 / 255.f, 143 / 255.f, 1};
+static Color paper_color = {244 / 255.f, 238 / 255.f, 224 / 255.f, 1};
+static float body_strength = .58f;
 
 static FishPoint add(FishPoint a, FishPoint b) {
   return (FishPoint){a.x + b.x, a.y + b.y};
@@ -94,9 +97,9 @@ static void draw_fin(const FishBody *b, int joint, int side, float scale,
 /* Depth changes pigment color, not body opacity. Near bodies hide farther fish.
  */
 static Color pigment(float amount, float alpha) {
-  return (Color){.957f + (.114f - .957f) * amount,
-                 .933f + (.239f - .933f) * amount,
-                 .878f + (.561f - .878f) * amount, alpha};
+  return (Color){paper_color.r + (ink_color.r - paper_color.r) * amount,
+                 paper_color.g + (ink_color.g - paper_color.g) * amount,
+                 paper_color.b + (ink_color.b - paper_color.b) * amount, alpha};
 }
 
 static void draw_fish(int index) {
@@ -104,10 +107,11 @@ static void draw_fish(int index) {
   float z = school->particles[index].position.z / SCHOOL_DEPTH;
   float scale = school->scale * (depth_enabled ? 1.2f - z * .65f : 1);
   float distance = depth_enabled ? z : 0;
-  float body_ink = .58f - .38f * distance;
+  float body_ink = body_strength * (1 - .65f * distance);
   Color stroke = pigment(1 - .55f * distance, 1);
   Color fill = pigment(body_ink, 1);
   Color fin_fill = pigment(body_ink * .72f, .96f);
+  Color eye_color = body_strength > .75f ? pigment(.08f, 1) : stroke;
   FishPoint head = b->joints[0];
   draw_fin(b, 3, -1, scale, fin_fill, stroke);
   draw_fin(b, 3, 1, scale, fin_fill, stroke);
@@ -168,7 +172,7 @@ static void draw_fish(int index) {
   for (int side = -1; side <= 1; side += 2) {
     FishPoint eye = add(add(head, mul(forward, radius * .2f)),
                         mul(normal, radius * .65f * side));
-    circle(eye, fmaxf(.65f, 1.15f * scale), stroke);
+    circle(eye, fmaxf(.65f, 1.15f * scale), eye_color);
   }
   if (debug_spines) {
     Color debug = {.48f, .20f, .28f, .95f};
@@ -287,6 +291,16 @@ EMSCRIPTEN_KEEPALIVE void set_debug(int enabled) {
 }
 EMSCRIPTEN_KEEPALIVE void set_depth(int enabled) {
   depth_enabled = enabled != 0;
+}
+static Color unpack_rgb(unsigned int rgb) {
+  return (Color){((rgb >> 16) & 255) / 255.f, ((rgb >> 8) & 255) / 255.f,
+                 (rgb & 255) / 255.f, 1};
+}
+EMSCRIPTEN_KEEPALIVE void set_palette(int ink_rgb, int paper_rgb,
+                                      float strength) {
+  ink_color = unpack_rgb((unsigned int)ink_rgb);
+  paper_color = unpack_rgb((unsigned int)paper_rgb);
+  body_strength = fminf(1, fmaxf(0, strength));
 }
 EMSCRIPTEN_KEEPALIVE void set_paused(int paused) {
   if (school)
