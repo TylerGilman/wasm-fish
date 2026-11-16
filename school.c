@@ -204,7 +204,8 @@ static void step(School *s) {
       p->velocity.z *= -1;
     }
     fish_body_resolve(&s->bodies[i], p->position.x, p->position.y,
-                      p->velocity.x, p->velocity.y, SCHOOL_STEP);
+                      p->velocity.x / SCHOOL_STEP, p->velocity.y / SCHOOL_STEP,
+                      SCHOOL_STEP);
   }
 }
 

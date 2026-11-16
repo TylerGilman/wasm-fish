@@ -31,7 +31,7 @@ Unzip it and serve its `web` directory with a local HTTP server.
 - Fish count: 1 to 128. The defaults are 40 on desktop and 16 on mobile.
 - Swim speed: changes simulation time, including body motion.
 - Fish size: changes the rendered size and obstacle clearance.
-- Depth fade: changes size and opacity with the fish's Z position.
+- Depth fade: changes size and color with the fish's Z position.
 - Show spines: shows the 12 constrained points and links.
 - Follow pointer: guides the school toward the pointer.
 - Pause and New school: pause movement or generate another seeded school.
@@ -52,8 +52,23 @@ The last two guide the tail.
 The renderer builds a smooth outline, fins, eyes, and a forked tail from those points.
 It draws the shapes in one batched WebGL 2 triangle call.
 The canvas background is transparent.
-Depth changes size, opacity, and draw order, as it does in the original flock.
+Depth changes size, color, and draw order.
+The bodies are opaque, so a near fish covers a fish behind it.
 This is not a perspective camera or a solid 3D fish mesh.
+
+The fins are thin, swept blades.
+Their angles use head turn rate, swim speed, and body length.
+The front pectoral fin on the inside of a turn opens out.
+The outside fin folds back toward the body.
+A smaller turn radius causes a larger difference between the two fins.
+The rear pelvic fins make smaller movements after a short delay.
+Both pairs return smoothly toward their straight swimming pose.
+All fin motion and geometry run in C/WASM.
+
+This is a simple motion model, with inspiration from studies of
+[pectoral fins during turns](https://bpb-us-e1.wpmucdn.com/sites.harvard.edu/dist/6/58/files/2022/03/Lauder.et_.al_.BB_.2006.pdf)
+and [pelvic fins during maneuvers](https://pubmed.ncbi.nlm.nih.gov/18775930/).
+It does not model the water forces on the fins.
 
 The simulation runs at a fixed 60 steps per second.
 Each step reads a shared snapshot of the school.
@@ -74,6 +89,8 @@ node scripts/check-demo.mjs http://127.0.0.1:8090/ 390 844 reduce
 
 Native checks exercise joint distances, bend limits, frame-rate independence,
 pause, depth order, count limits, resize, reset, and obstacle steering.
+Fin checks exercise left and right turns, turn radius, blade width,
+delayed movement, and the return to straight swimming.
 Browser checks need Node.js 22+ and Google Chrome.
 They exercise the compiled WASM through the demo controls.
 Captures are written to `build/`.
@@ -111,7 +128,7 @@ They are not a hard collision solver.
 
 ## Source layout
 
-- `fish.c`: body chain and width profile.
+- `fish.c`: body chain, width profile, and turn-driven fins.
 - `school.c`: fixed-step school state, boundaries, and rectangle avoidance.
 - `particle.c`, `vector3d.c`, `spatial_grid.c`: flock core.
 - `main_wasm.c`: WebGL renderer and exported browser controls.

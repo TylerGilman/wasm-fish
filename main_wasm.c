@@ -83,40 +83,31 @@ static void polygon(FishPoint *p, int count, Color fill, Color stroke,
 
 static void draw_fin(const FishBody *b, int joint, int side, float scale,
                      Color fill, Color stroke) {
-  FishPoint head = b->joints[0], base = b->joints[joint];
-  FishPoint f = direction(b->angles[joint]);
-  FishPoint n = mul((FishPoint){-f.y, f.x}, (float)side);
-  float r = fish_body_radius(b, joint),
-        length = b->length * (joint == 3 ? .22f : .12f);
-  float flap = 1 + .10f * sinf(b->phase + side * .7f);
-  FishPoint a = add(base, mul(n, r * .65f));
-  FishPoint tip =
-      add(add(base, mul(n, r + length * flap)), mul(f, -length * .45f));
-  FishPoint back = add(a, mul(f, -length * .8f));
-  FishPoint control_a = add(add(a, mul(n, length * .8f)), mul(f, length * .2f));
-  FishPoint control_b =
-      add(add(back, mul(n, length * .8f)), mul(f, -length * .15f));
-  FishPoint p[17];
-  p[0] = a;
-  for (int i = 1; i <= 8; ++i) {
-    float t = i / 8.0f, u = 1 - t;
-    p[i] = add(add(mul(a, u * u), mul(control_a, 2 * u * t)), mul(tip, t * t));
-    p[8 + i] =
-        add(add(mul(tip, u * u), mul(control_b, 2 * u * t)), mul(back, t * t));
-  }
-  for (int i = 0; i < 17; ++i)
-    p[i] = transform(p[i], head, scale);
-  polygon(p, 17, fill, stroke, .75f * scale);
+  FishFin fin;
+  if (!fish_fin_shape(b, joint, side, &fin))
+    return;
+  for (int i = 0; i < FISH_FIN_POINTS; ++i)
+    fin.outline[i] = transform(fin.outline[i], b->joints[0], scale);
+  polygon(fin.outline, FISH_FIN_POINTS, fill, stroke, .65f * scale);
+}
+
+/* Depth changes pigment color, not body opacity. Near bodies hide farther fish.
+ */
+static Color pigment(float amount, float alpha) {
+  return (Color){.957f + (.114f - .957f) * amount,
+                 .933f + (.239f - .933f) * amount,
+                 .878f + (.561f - .878f) * amount, alpha};
 }
 
 static void draw_fish(int index) {
   const FishBody *b = &school->bodies[index];
   float z = school->particles[index].position.z / SCHOOL_DEPTH;
   float scale = school->scale * (depth_enabled ? 1.2f - z * .65f : 1);
-  float alpha = depth_enabled ? 1 - z * .65f : 1;
-  Color stroke = {.114f, .239f, .561f, .88f * alpha};
-  Color fill = {.114f, .239f, .561f, .22f * alpha};
-  Color fin_fill = {.114f, .239f, .561f, .13f * alpha};
+  float distance = depth_enabled ? z : 0;
+  float body_ink = .58f - .38f * distance;
+  Color stroke = pigment(1 - .55f * distance, 1);
+  Color fill = pigment(body_ink, 1);
+  Color fin_fill = pigment(body_ink * .72f, .96f);
   FishPoint head = b->joints[0];
   draw_fin(b, 3, -1, scale, fin_fill, stroke);
   draw_fin(b, 3, 1, scale, fin_fill, stroke);

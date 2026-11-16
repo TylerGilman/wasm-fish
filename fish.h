@@ -4,6 +4,7 @@
 #define FISH_JOINTS 12
 #define FISH_BODY_JOINTS 10
 #define FISH_MAX_BEND 0.3926990817f
+#define FISH_FIN_POINTS 17
 
 typedef struct {
   float x, y;
@@ -12,12 +13,22 @@ typedef struct {
   FishPoint joints[FISH_JOINTS];
   float angles[FISH_JOINTS];
   float length, girth, phase;
+  float speed, turn, pelvic_turn;
 } FishBody;
+
+typedef struct {
+  FishPoint outline[FISH_FIN_POINTS];
+  FishPoint attachment, tip;
+} FishFin;
 
 /* Based on Argonaut's angle-constrained chain. See THIRD_PARTY_NOTICES.md. */
 void fish_body_init(FishBody *body, float x, float y, float heading,
                     float length, float girth, float phase);
+/* Resolver velocities use CSS pixels per second. */
 void fish_body_resolve(FishBody *body, float x, float y, float velocity_x,
                        float velocity_y, float dt);
 float fish_body_radius(const FishBody *body, int joint);
+/* Positive turns are clockwise on screen.
+   side +1 is the fish's right fin; -1 is its left fin. */
+int fish_fin_shape(const FishBody *body, int joint, int side, FishFin *fin);
 #endif
